@@ -135,14 +135,37 @@ jobs:
       - name: Verify WebAssembly Binary Integrity
         run: |
           sudo apt-get update && sudo apt-get install -y wabt
-          WASM_PATH=$(find ./dist -name "*.wasm" | head -n 1)
-          
-          if [ -n "$WASM_PATH" ]; then
-            wasm-validate "$WASM_PATH"
-            FILE_SIZE=$(stat -c%s "$WASM_PATH")
-            echo "Verified $WASM_PATH ($FILE_SIZE bytes)"
-          else
-            echo "::error::No .wasm asset found in extracted bundle."
+
+          # Find all WASM files
+          wasm_files=$(find ./dist -name "*.wasm")
+          if [ -z "$wasm_files" ]; then
+            echo "::error::No .wasm assets found in extracted bundle."
+            exit 1
+          fi
+
+          error_count=0
+
+          # Loop through each file using a newline-safe read
+          echo "$wasm_files" | while read -r wasm_path; do
+            if [ -z "$wasm_path" ]; then continue; fi
+
+            # Run validation and capture errors
+            if ! wasm-validate "$wasm_path"; then
+              echo "::error file=$wasm_path::Validation failed for $wasm_path"
+              error_count=$((error_count + 1))
+            else
+              file_size=$(stat -c%s "$wasm_path")
+              echo "Verified $wasm_path ($file_size bytes)"
+            fi
+
+            # Persist error count outside the while subshell
+            echo "$error_count" > /tmp/error_count.txt
+          done
+
+          # Check if any errors occurred
+          final_errors=$(cat /tmp/error_count.txt)
+          if [ "$final_errors" -gt 0 ]; then
+            echo "::error::$final_errors WebAssembly file(s) failed validation."
             exit 1
           fi
 
