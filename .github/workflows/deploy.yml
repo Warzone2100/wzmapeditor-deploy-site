@@ -158,7 +158,7 @@ jobs:
             Cross-Origin-Embedder-Policy: require-corp
             Cross-Origin-Opener-Policy: same-origin
             X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
-            Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https://maps.wz2100.net https://maps-assets.wz2100.net https://github.com https://objects.githubusercontent.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none';
+            Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'; connect-src 'self' https://maps.wz2100.net https://maps-assets.wz2100.net https://github.com https://objects.githubusercontent.com; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none';
             Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
             X-Frame-Options: DENY
             X-Content-Type-Options: nosniff
