@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Checkout Configuration Repo
         uses: actions/checkout@v7
+        with:
+          path: src
 
       # Step 2: Generate Cross-Repo Access Token via GitHub App
       - name: Generate Short-Lived Installation Token
