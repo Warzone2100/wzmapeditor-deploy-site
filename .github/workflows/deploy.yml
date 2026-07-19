@@ -168,9 +168,7 @@ jobs:
       # Step 10: Deploy Target Output to Cloudflare Pages Branch
       - name: Deploy Distribution Bundle to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
-        env:
-          PROJECT_NAME: ${{ vars.CLOUDFLARE_MAP_EDITOR_PAGES_PROJECT_ID }}
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy ./dist --project-name="${PROJECT_NAME}" --branch="${{ env.CF_TARGET_BRANCH }}"
+          command: pages deploy ./dist --project-name="${{ vars.CLOUDFLARE_MAP_EDITOR_PAGES_PROJECT_ID }}" --branch="${{ env.CF_TARGET_BRANCH }}"
