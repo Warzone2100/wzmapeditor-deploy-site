@@ -1,0 +1,173 @@
+name: WZMapEditor Web Deployment
+
+on:
+  repository_dispatch:
+    types: [publish_artifact]
+
+jobs:
+  validate-and-deploy:
+    runs-on: ubuntu-latest
+    environment: deploy
+    steps:
+      - name: Checkout Configuration Repo
+        uses: actions/checkout@v7
+
+      # Step 2: Generate Cross-Repo Access Token via GitHub App
+      - name: Generate Short-Lived Installation Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.WZMAPEDITOR_READ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.WZMAPEDITOR_READ_APP_PRIVATE_KEY }}
+          repositories: "Warzone2100/wzmapeditor"
+
+      # Step 3: Evaluate Payload to Assign the Cloudflare Branch Target
+      - name: Evaluate Payload and Set Context
+        id: context
+        run: |
+          if [ "${{ github.event.client_payload.branch }}" = "main" ]; then
+            echo "CF_TARGET_BRANCH=dev-preview" >> $GITHUB_ENV
+            echo "DOWNLOAD_MODE=artifact" >> $GITHUB_ENV
+          elif [ -n "${{ github.event.client_payload.tag }}" ]; then
+            echo "CF_TARGET_BRANCH=main" >> $GITHUB_ENV
+            echo "DOWNLOAD_MODE=release" >> $GITHUB_ENV
+          else
+            echo "Error: Invalid payload origin tracking parameters."
+            exit 1
+          fi
+
+      # Step 4A: Download via Actions Artifacts (For main branch commits)
+      - name: Download Target WebAssembly Artifact Run File
+        if: env.DOWNLOAD_MODE == 'artifact'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          mkdir -p ./tmp_download
+          gh run download ${{ github.event.client_payload.run_id }} \
+            --repo "Warzone2100/wzmapeditor" \
+            --name "wzmapeditor-web.zip" \
+            --dir ./tmp_download
+
+      # Step 4B: Download via GitHub Release Asset (For formal release tags)
+      - name: Download Target WebAssembly Release Asset
+        if: env.DOWNLOAD_MODE == 'release'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          mkdir -p ./tmp_download
+          gh release download ${{ github.event.client_payload.tag }} \
+            --repo "Warzone2100/wzmapeditor" \
+            --pattern "wzmapeditor-web.zip" \
+            --dir ./tmp_download
+
+      # Step 5: Extract Zip Directly into the Flat Distribution Root
+      - name: Extract WebAssembly Bundle
+        run: |
+          mkdir -p ./dist
+          unzip ./tmp_download/wzmapeditor-web.zip -d ./dist/
+          rm -rf ./tmp_download
+
+      # Step 6: Check for Architectural Conflicts (Reserved Cloudflare Configurations)
+      - name: Check for Architectural Conflicts
+        run: |
+          FAILED=0
+          
+          # Explicit array definition of banned configuration items
+          RESERVED_ITEMS=(
+            "./dist/_redirects"
+            "./dist/_headers"
+            "./dist/_worker.js"
+            "./dist/404.html"
+            "./dist/functions"
+            "./dist/wrangler.toml"
+            "./dist/wrangler.json"
+          )
+          
+          echo "Scanning extracted artifact layout for architectural conflicts..."
+          
+          for ITEM in "${RESERVED_ITEMS[@]}"; do
+            if [ -e "$ITEM" ]; then
+              echo "::error file=$ITEM::Violation: Extracted zip contained a Cloudflare configuration file or folder: $(basename $ITEM)"
+              FAILED=1
+            fi
+          done
+          
+          if [ "$FAILED" -eq 1 ]; then
+            echo "Deployment halted: Artifact violates architectural constraints."
+            exit 1
+          else
+            echo "Check passed: No architectural conflicts found."
+          fi
+
+      # Step 7: File Size Checks
+      - name: Check File Size Limit (25 MiB)
+        shell: bash
+        run: |
+          # Define build output folder and 25 MiB limit in bytes
+          BUILD_DIR="./dist" 
+          MAX_SIZE=26214400 
+          LARGE_FILES_FOUND=0
+
+          echo "Scanning '$BUILD_DIR' for files larger than 25 MiB..."
+
+          # Find files larger than 25MiB and print details
+          while IFS= read -r -d '' file; do
+            file_size=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file")
+            file_size_mib=$(echo "scale=2; $file_size / 1048576" | bc)
+            echo "::error file=$file::'$file' is $file_size_mib MiB (Exceeds Cloudflare 25 MiB cap)"
+            LARGE_FILES_FOUND=1
+          done < <(find "$BUILD_DIR" -type f -size +25M -print0)
+
+          if [ $LARGE_FILES_FOUND -ne 0 ]; then
+            echo "::error::Build failed: One or more files exceed Cloudflare Pages file size limits."
+            exit 1
+          else
+            echo "Checked passed: All files are within the 25 MiB limit."
+          fi
+
+      # Step 8: Perform Structural Verification on WebAssembly Binary
+      - name: Verify WebAssembly Binary Integrity
+        run: |
+          sudo apt-get update && sudo apt-get install -y wabt
+          WASM_PATH=$(find ./dist -name "*.wasm" | head -n 1)
+          
+          if [ -n "$WASM_PATH" ]; then
+            wasm-validate "$WASM_PATH"
+            FILE_SIZE=$(stat -c%s "$WASM_PATH")
+            echo "Verified $WASM_PATH ($FILE_SIZE bytes)"
+          else
+            echo "::error::No .wasm asset found in extracted bundle."
+            exit 1
+          fi
+
+      # Step 9: Inject Redirects / Headers configuration
+      - name: Inject Cloudflare Configuration Headers and Redirects
+        run: |
+          cat <<EOF > ./dist/_redirects
+          /fallback   /index.html   302
+          EOF
+
+          cat <<EOF > ./dist/_headers
+          /*
+            Cross-Origin-Embedder-Policy: require-corp
+            Cross-Origin-Opener-Policy: same-origin
+            X-Robots-Tag: noindex, nofollow, noarchive, nosnippet
+            Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https://maps.wz2100.net https://maps-assets.wz2100.net https://github.com https://objects.githubusercontent.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none';
+            Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+            X-Frame-Options: DENY
+            X-Content-Type-Options: nosniff
+            Referrer-Policy: no-referrer
+          EOF
+
+      # Step 10: Deploy Target Output to Cloudflare Pages Branch
+      - name: Deploy Distribution Bundle to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        env:
+          PROJECT_NAME: ${{ vars.CLOUDFLARE_MAP_EDITOR_PAGES_PROJECT_ID }}
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: |
+            pages deploy ./dist \
+              --project-name="${PROJECT_NAME}" \
+              --branch="${{ env.CF_TARGET_BRANCH }}"
