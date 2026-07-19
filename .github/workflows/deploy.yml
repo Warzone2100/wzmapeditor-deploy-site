@@ -41,12 +41,16 @@ jobs:
         if: env.DOWNLOAD_MODE == 'artifact'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          MAPEDITOR_REPO: 'Warzone2100/wzmapeditor'
+          MAPEDITOR_RUN_ID: ${{ github.event.client_payload.run_id }}
         run: |
           mkdir -p ./tmp_download
-          gh run download ${{ github.event.client_payload.run_id }} \
-            --repo "Warzone2100/wzmapeditor" \
-            --name "wzmapeditor-web.zip" \
-            --dir ./tmp_download
+          # 1. Fetch the internal Artifact ID using the artifact's name
+          ARTIFACT_ID=$(gh api "repos/${MAPEDITOR_REPO}/actions/runs/${MAPEDITOR_RUN_ID}/artifacts" \
+            --jq '.artifacts[] | select(.name=="wzmapeditor-web.zip") | .id')
+          echo "Found Artifact ID: $ARTIFACT_ID"
+          # 2. Download the raw payload directly to a local file
+          gh api "repos/${MAPEDITOR_REPO}/actions/artifacts/${ARTIFACT_ID}/zip" > ./tmp_download/wzmapeditor-web.zip
 
       # Step 4B: Download via GitHub Release Asset (For formal release tags)
       - name: Download Target WebAssembly Release Asset
