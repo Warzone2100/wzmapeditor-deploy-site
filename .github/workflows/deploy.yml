@@ -171,7 +171,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: |
-            pages deploy ./dist \
-              --project-name="${PROJECT_NAME}" \
-              --branch="${{ env.CF_TARGET_BRANCH }}"
+          command: pages deploy ./dist --project-name="${PROJECT_NAME}" --branch="${{ env.CF_TARGET_BRANCH }}"
